@@ -1,0 +1,7 @@
+<suite name="MobileTestSuite" verbose="1">
+    <test name="App Tests">
+        <classes>
+            <class name="br.com.mobile.tests.PurchaseProductTest"/>
+        </classes>
+    </test>
+</suite>
