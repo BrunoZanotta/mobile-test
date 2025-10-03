@@ -14,38 +14,69 @@ jobs:
       - name: Checkout do repositório
         uses: actions/checkout@v4
 
-      - name: Configurar Java JDK 23
+      - name: Java 23
         uses: actions/setup-java@v4
         with:
           java-version: '23'
           distribution: 'temurin'
           cache: maven
 
-      - name: Configurar Node.js
+      - name: Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Instalar Appium e Driver
+      - name: Instalar Appium & Driver
         run: |
-          npm install -g appium@latest
+          npm i -g appium@latest
           appium driver install uiautomator2
 
-      - name: Iniciar Emulador + Rodar Testes
+      - name: Emulador + Testes
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 33
           target: google_apis
           arch: x86_64
+          emulator-boot-timeout: 1200
+          disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -no-metrics
           script: |
+            echo "== Reiniciando ADB =="
+            adb kill-server || true
             adb start-server
             adb devices
-            appium > appium.log 2>&1 &
-            sleep 5
-            mvn clean test
 
-      - name: Upload dos Relatórios de Teste (Allure)
+            echo "== Aguardando o emulador ficar online =="
+            until adb -s emulator-5554 get-state 2>/dev/null | grep -q "device"; do
+              adb devices
+              sleep 3
+            done
+
+            echo "== Aguardando boot completo (sys.boot_completed=1) =="
+            boot_completed=""
+            until [ "$boot_completed" = "1" ]; do
+              boot_completed=$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+              echo "boot_completed=$boot_completed"
+              sleep 5
+            done
+
+            echo "== Desabilitando animações (reforço) =="
+            adb -s emulator-5554 shell settings put global window_animation_scale 0
+            adb -s emulator-5554 shell settings put global transition_animation_scale 0
+            adb -s emulator-5554 shell settings put global animator_duration_scale 0
+            adb -s emulator-5554 shell input keyevent 82 || true
+
+            echo "== Iniciando Appium em background =="
+            appium > appium.log 2>&1 &
+
+            echo "== Rodando testes Maven =="
+            mvn -B clean test \
+              -DappiumUrl=http://127.0.0.1:4723 \
+              -DdeviceName=emulator-5554 \
+              -DappPackage=com.demo \
+              -DappActivity=.MainActivity
+
+      - name: Upload Allure
         if: always()
         uses: actions/upload-artifact@v4
         with:
