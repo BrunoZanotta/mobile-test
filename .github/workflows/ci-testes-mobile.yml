@@ -1,4 +1,4 @@
-name: CI de Testes Mobile com Appium
+name: CI de Testes Mobile com Appium (Robusto)
 
 on:
   push:
@@ -7,11 +7,16 @@ on:
     branches: [ main ]
 
 jobs:
-  run-appium-tests:
-    runs-on: macos-13
+  e2e-android:
+    runs-on: ubuntu-latest
+    env:
+      APP_PACKAGE: com.demo
+      APP_ACTIVITY: .MainActivity
+      ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL: 120
+      ADB_INSTALL_TIMEOUT: 10
 
     steps:
-      - name: Checkout do repositório
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Java 23
@@ -21,60 +26,111 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
-      - name: Node.js
+      - name: Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Instalar Appium & Driver
+      - name: Instalar Appium + Driver
         run: |
           npm i -g appium@latest
           appium driver install uiautomator2
-
-      - name: Emulador + Testes
+      - name: Emulador + Appium + Testes
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 33
           target: google_apis
           arch: x86_64
+          profile: pixel_6
           emulator-boot-timeout: 1200
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -no-metrics
+          emulator-options: >-
+            -no-window
+            -gpu swiftshader_indirect
+            -no-snapshot
+            -no-audio
+            -no-boot-anim
+            -no-metrics
+            -accel off
+            -camera-back none
+            -camera-front none
+            -memory 2048
+            -cores 2
           script: |
-            echo "== Reiniciando ADB =="
+            set -euxo pipefail
+
+            echo "== Reiniciando ADB para evitar offline =="
+            pkill -f adb || true
             adb kill-server || true
             adb start-server
-            adb devices
+            adb devices || true
 
-            echo "== Aguardando o emulador ficar online =="
-            until adb -s emulator-5554 get-state 2>/dev/null | grep -q "device"; do
-              adb devices
+            echo "== Aguardando dispositivo aparecer =="
+            # aguarda o emulador registrar no ADB
+            for i in $(seq 1 60); do
+              if adb devices | awk 'NR>1 {print $1,$2}' | grep -q "emulator-5554 device"; then
+                echo "Device online"; break
+              fi
+              adb reconnect offline || true
               sleep 3
+              if [ "$i" -eq 60 ]; then
+                echo "Timeout esperando device online"
+                exit 1
+              fi
             done
 
-            echo "== Aguardando boot completo (sys.boot_completed=1) =="
-            boot_completed=""
-            until [ "$boot_completed" = "1" ]; do
-              boot_completed=$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
-              echo "boot_completed=$boot_completed"
-              sleep 5
+            echo "== Aguardando boot completo =="
+            for i in $(seq 1 120); do
+              BOOT_SYS=$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+              BOOT_DEV=$(adb -s emulator-5554 shell getprop dev.bootcomplete 2>/dev/null | tr -d '\r')
+              echo "sys.boot_completed=$BOOT_SYS dev.bootcomplete=$BOOT_DEV"
+              if [ "$BOOT_SYS" = "1" ] || [ "$BOOT_DEV" = "1" ]; then
+                break
+              fi
+              sleep 3
+              if [ "$i" -eq 120 ]; then
+                echo "Timeout aguardando boot completo"
+                adb -s emulator-5554 shell getprop || true
+                exit 1
+              fi
             done
 
             echo "== Desabilitando animações (reforço) =="
-            adb -s emulator-5554 shell settings put global window_animation_scale 0
-            adb -s emulator-5554 shell settings put global transition_animation_scale 0
-            adb -s emulator-5554 shell settings put global animator_duration_scale 0
+            adb -s emulator-5554 shell settings put global window_animation_scale 0 || true
+            adb -s emulator-5554 shell settings put global transition_animation_scale 0 || true
+            adb -s emulator-5554 shell settings put global animator_duration_scale 0 || true
             adb -s emulator-5554 shell input keyevent 82 || true
 
-            echo "== Iniciando Appium em background =="
+            echo "== Checando se o app está instalado =="
+            if ! adb -s emulator-5554 shell pm list packages | grep -q "${APP_PACKAGE}"; then
+              echo "ERRO: App ${APP_PACKAGE} não está instalado no emulador."
+              echo "Instale previamente no AVD-base ou adapte seus testes para instalar o APK antes."
+              exit 1
+            fi
+
+            echo "== Iniciando Appium em background e aguardando porta =="
             appium > appium.log 2>&1 &
+            # aguarda porta 4723 responder
+            for i in $(seq 1 60); do
+              if (echo > /dev/tcp/127.0.0.1/4723) >/dev/null 2>&1; then
+                echo "Appium pronto"; break
+              fi
+              sleep 1
+              if [ "$i" -eq 60 ]; then
+                echo "Appium não iniciou em 60s"
+                exit 1
+              fi
+            done
 
             echo "== Rodando testes Maven =="
             mvn -B clean test \
               -DappiumUrl=http://127.0.0.1:4723 \
               -DdeviceName=emulator-5554 \
-              -DappPackage=com.demo \
-              -DappActivity=.MainActivity
+              -DappPackage="${APP_PACKAGE}" \
+              -DappActivity="${APP_ACTIVITY}"
+
+            echo "== Coletando logcat para diagnóstico =="
+            adb -s emulator-5554 logcat -d > logcat.txt || true
 
       - name: Upload Allure
         if: always()
@@ -82,4 +138,14 @@ jobs:
         with:
           name: allure-results
           path: target/allure-results
+          retention-days: 7
+
+      - name: Upload Logs (Appium/Logcat)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-mobile
+          path: |
+            appium.log
+            logcat.txt
           retention-days: 7
