@@ -14,21 +14,20 @@ jobs:
       - name: Checkout do repositório
         uses: actions/checkout@v4
 
-      - name: Configurar Java JDK 11
+      - name: Configurar Java JDK 23
         uses: actions/setup-java@v4
         with:
-          java-version: '11'
+          java-version: '23'
           distribution: 'temurin'
           cache: maven
 
       - name: Configurar Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
 
       - name: Instalar Appium e Driver
         run: |
-          # A CORREÇÃO ESTÁ AQUI: Adicionamos o @latest
           npm install -g appium@latest
           appium driver install uiautomator2
 
