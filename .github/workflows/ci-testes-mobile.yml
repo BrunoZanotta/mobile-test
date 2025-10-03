@@ -8,163 +8,64 @@ on:
 
 jobs:
   e2e-android:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 45
 
     env:
-      APP_PACKAGE: com.demo
+      APP_PACKAGE: com.saucelabs.mydemoapp.rn
       APP_ACTIVITY: .MainActivity
-      ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL: 180
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Java 23
+      - name: Configurar Java 23
         uses: actions/setup-java@v4
         with:
           java-version: '23'
           distribution: 'temurin'
           cache: maven
 
-      - name: Node.js 20
+      - name: Configurar Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Appium + Driver
+      - name: Instalar Appium + Driver
         run: |
           npm i -g appium@latest
           appium driver install uiautomator2
 
-      - name: Emulator + Appium + Tests
+      - name: Iniciar Emulador, Appium e Rodar Testes
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 33
           target: google_apis
-          arch: x86_64
+          arch: arm64-v8a
           profile: pixel_6
           emulator-boot-timeout: 1800
           disable-animations: true
           emulator-options: >-
             -no-window
-            -gpu swiftshader_indirect
             -no-snapshot
             -no-boot-anim
             -no-audio
-            -no-metrics
-            -accel off
-            -camera-back none
-            -camera-front none
-            -wipe-data
-            -memory 3072
-            -cores 2
           script: |
-            set -euo pipefail
+            echo "== Esperando o boot do emulador =="
+            adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done;'
 
-            echo "== Normalizando PATH para usar UM ADB só =="
-            export ANDROID_SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-            export PATH="$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/emulator:$PATH"
-            which adb
-            adb version || true
-
-            echo "== Reiniciando ADB (matando instâncias antigas) =="
-            pkill -f adb || true
-            adb kill-server || true
-            sleep 1
-            adb start-server
-            adb devices || true
-
-            echo "== Capturando serial do emulador dinamicamente =="
-            SERIAL=""
-            for i in $(seq 1 120); do
-              SERIAL=$(adb devices | awk '/emulator-/{print $1; exit}')
-              if [ -n "${SERIAL}" ]; then
-                echo "Serial detectado: ${SERIAL}"
-                break
-              fi
-              sleep 2
-              if [ "$i" -eq 120 ]; then
-                echo "Timeout esperando emulador aparecer no adb devices"
-                adb devices
-                exit 1
-              fi
-            done
-
-            echo "== Garantindo que o estado não é 'offline' =="
-            for i in $(seq 1 60); do
-              STATE=$(adb -s "${SERIAL}" get-state 2>/dev/null || true)
-              echo "STATE=${STATE}"
-              if [ "${STATE}" = "device" ]; then
-                break
-              fi
-              adb reconnect offline || true
-              if [ "$i" -eq 30 ]; then
-                echo "Reiniciando adb server no meio do processo..."
-                adb kill-server || true
-                sleep 1
-                adb start-server
-              fi
-              sleep 3
-              if [ "$i" -eq 60 ]; then
-                echo "Timeout esperando sair de 'offline'"
-                adb devices
-                exit 1
-              fi
-            done
-
-            echo "== Esperando boot completo (sys.boot_completed/dev.bootcomplete) =="
-            for i in $(seq 1 200); do
-              SYS=$(adb -s "${SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
-              DEV=$(adb -s "${SERIAL}" shell getprop dev.bootcomplete 2>/dev/null | tr -d '\r')
-              echo "sys.boot_completed=${SYS} dev.bootcomplete=${DEV}"
-              if [ "${SYS}" = "1" ] || [ "${DEV}" = "1" ]; then
-                break
-              fi
-              sleep 3
-              if [ "$i" -eq 200 ]; then
-                echo "Timeout aguardando boot completo"
-                adb -s "${SERIAL}" shell getprop || true
-                exit 1
-              fi
-            done
-
-            echo "== Desbloqueando e zerando animações =="
-            adb -s "${SERIAL}" shell settings put global window_animation_scale 0 || true
-            adb -s "${SERIAL}" shell settings put global transition_animation_scale 0 || true
-            adb -s "${SERIAL}" shell settings put global animator_duration_scale 0 || true
-            adb -s "${SERIAL}" shell input keyevent 82 || true
-
-            echo "== Checando se o app já está instalado =="
-            if ! adb -s "${SERIAL}" shell pm list packages | grep -q "${APP_PACKAGE}"; then
-              echo "ERRO: App ${APP_PACKAGE} não está instalado no AVD."
-              echo "-> Instale antes (ou adapte para instalar APK neste passo)."
-              exit 1
-            fi
+            echo "== Desbloqueando tela =="
+            adb shell input keyevent 82
 
             echo "== Subindo Appium e aguardando porta 4723 =="
             appium > appium.log 2>&1 &
-            for i in $(seq 1 120); do
-              if (bash -lc "exec 3<>/dev/tcp/127.0.0.1/4723") 2>/dev/null; then
-                echo "Appium pronto"
-                break
-              fi
-              sleep 1
-              if [ "$i" -eq 120 ]; then
-                echo "Appium não respondeu em 120s"
-                exit 1
-              fi
-            done
+            npx wait-on tcp:4723 -t 120000
 
             echo "== Rodando testes Maven =="
-            mvn -B clean test \
-              -DappiumUrl=http://127.0.0.1:4723 \
-              -DdeviceName="${SERIAL}" \
-              -DappPackage="${APP_PACKAGE}" \
-              -DappActivity="${APP_ACTIVITY}"
+            mvn -B clean test
 
             echo "== Coletando logs para diagnóstico =="
-            adb -s "${SERIAL}" logcat -d > logcat.txt || true
+            adb logcat -d > logcat.txt || true
 
       - name: Allure (resultados)
         if: always()
