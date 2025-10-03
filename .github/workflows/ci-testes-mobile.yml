@@ -8,7 +8,7 @@ on:
 
 jobs:
   run-appium-tests:
-    runs-on: macos-latest
+    runs-on: macos-13
 
     steps:
       - name: Checkout do repositório
@@ -31,20 +31,19 @@ jobs:
           npm install -g appium@latest
           appium driver install uiautomator2
 
-      - name: Iniciar Servidor Appium em Background
-        run: |
-          appium &
-
-      - name: Iniciar Emulador Android
+      - name: Iniciar Emulador + Rodar Testes
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 33
           target: google_apis
-          arch: arm64-v8a
-          script: echo "Emulador iniciado."
-
-      - name: Executar testes com Maven
-        run: mvn clean test
+          arch: x86_64
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -no-metrics
+          script: |
+            adb start-server
+            adb devices
+            appium > appium.log 2>&1 &
+            sleep 5
+            mvn clean test
 
       - name: Upload dos Relatórios de Teste (Allure)
         if: always()
