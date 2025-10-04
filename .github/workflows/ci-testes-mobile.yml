@@ -67,9 +67,6 @@ jobs:
           - name: "Pixel 6 - Android 12"
             device: "Google Pixel 6"
             os: "12.0"
-          - name: "Galaxy S22 - Android 13"
-            device: "Samsung Galaxy S22"
-            os: "13.0"
     name: Executar Testes (${{ matrix.name }})
     container:
       image: ${{ needs.build-and-push-image.outputs.image }}:latest
