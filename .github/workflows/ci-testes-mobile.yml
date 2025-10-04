@@ -12,14 +12,16 @@ permissions:
   actions: read
 
 env:
-  IMAGE_NAME: mobile-tests
-  DOCKER_PLATFORMS: linux/amd64
   MAVEN_OPTS: "-Dmaven.artifact.threads=8 -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=warn -Djava.net.preferIPv4Stack=true"
 
 jobs:
   build-and-push-image:
     name: Build & Push da Imagem (GHCR)
     runs-on: ubuntu-latest
+
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      tags: ${{ steps.meta.outputs.tags }}
 
     steps:
       - name: Checkout
@@ -35,9 +37,9 @@ jobs:
       - name: Definir metadados da imagem
         id: meta
         run: |
-          echo "image=ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}" >> "$GITHUB_OUTPUT"
-          # tags: latest e SHA curto p/ rastreabilidade
-          echo "tags=$(echo ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest,ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${GITHUB_SHA::8})" >> "$GITHUB_OUTPUT"
+          IMAGE="ghcr.io/${{ github.repository_owner }}/mobile-tests"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "tags=${IMAGE}:latest,${IMAGE}:${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
 
       - name: Build & Push (com cache)
         uses: docker/build-push-action@v6
@@ -46,7 +48,7 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          platforms: ${{ env.DOCKER_PLATFORMS }}
+          platforms: linux/amd64
           cache-from: type=registry,ref=${{ steps.meta.outputs.image }}:buildcache
           cache-to: type=registry,ref=${{ steps.meta.outputs.image }}:buildcache,mode=max
           build-args: |
@@ -56,10 +58,11 @@ jobs:
     name: Executar Testes (na imagem publicada)
     runs-on: ubuntu-latest
     needs: build-and-push-image
+
     container:
-      image: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
+      image: ghcr.io/${{ github.repository_owner }}/mobile-tests:latest
       env:
-        MAVEN_OPTS: ${{ env.MAVEN_OPTS }}
+        MAVEN_OPTS: "-Dmaven.artifact.threads=8 -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=warn -Djava.net.preferIPv4Stack=true"
 
     steps:
       - name: Checkout
