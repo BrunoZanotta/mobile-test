@@ -24,25 +24,28 @@ jobs:
       tags: ${{ steps.meta.outputs.tags }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Login no GHCR
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Definir metadados da imagem
-        id: meta
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+          driver: docker-container
+
+      - id: meta
         run: |
           IMAGE="ghcr.io/${{ github.repository_owner }}/mobile-tests"
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           echo "tags=${IMAGE}:latest,${IMAGE}:${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
 
-      - name: Build & Push (com cache)
-        uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
@@ -65,19 +68,16 @@ jobs:
         MAVEN_OPTS: "-Dmaven.artifact.threads=8 -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=warn -Djava.net.preferIPv4Stack=true"
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Cache Maven
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: /root/.m2
           key: m2-${{ runner.os }}-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             m2-${{ runner.os }}-
 
-      - name: Iniciar Appium local (opcional)
-        run: |
+      - run: |
           nohup appium --base-path /wd/hub > appium.log 2>&1 &
           for i in {1..30}; do
             curl -sf http://localhost:4723/wd/hub/status && break
@@ -85,20 +85,17 @@ jobs:
           done
           curl -sf http://localhost:4723/wd/hub/status || (echo "Appium não respondeu a tempo" && exit 1)
 
-      - name: Rodar testes (Maven)
-        run: |
+      - run: |
           mvn -B clean test
 
-      - name: Upload Allure Results
-        if: always()
+      - if: always()
         uses: actions/upload-artifact@v4
         with:
           name: allure-results
           path: target/allure-results
           retention-days: 7
 
-      - name: Upload appium.log
-        if: always()
+      - if: always()
         uses: actions/upload-artifact@v4
         with:
           name: appium-log
