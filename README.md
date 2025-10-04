@@ -18,7 +18,7 @@ Este projeto contém um conjunto de testes automatizados para um aplicativo móv
 ## Pré-requisitos
 
 Antes de executar o projeto, garanta que você tenha o seguinte software instalado e configurado em sua máquina:
-* Java JDK (versão 11 ou superior)
+* Java JDK 17
 * Apache Maven
 * Node.js e npm
 * Appium Server 2.x (`npm install -g appium`)
