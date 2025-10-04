@@ -41,7 +41,8 @@ jobs:
 
       - id: meta
         run: |
-          IMAGE="ghcr.io/${{ github.repository_owner }}/mobile-tests"
+          OWNER_LC="${{ toLower(github.repository_owner) }}"
+          IMAGE="ghcr.io/${OWNER_LC}/mobile-tests"
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           echo "tags=${IMAGE}:latest,${IMAGE}:${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
 
@@ -63,7 +64,7 @@ jobs:
     needs: build-and-push-image
 
     container:
-      image: ghcr.io/${{ github.repository_owner }}/mobile-tests:latest
+      image: ${{ needs.build-and-push-image.outputs.image }}:latest
       env:
         MAVEN_OPTS: "-Dmaven.artifact.threads=8 -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=warn -Djava.net.preferIPv4Stack=true"
 
