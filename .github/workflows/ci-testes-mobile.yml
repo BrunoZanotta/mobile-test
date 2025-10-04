@@ -41,8 +41,8 @@ jobs:
 
       - id: meta
         run: |
-          OWNER_LC="${{ toLower(github.repository_owner) }}"
-          IMAGE="ghcr.io/${OWNER_LC}/mobile-tests"
+          OWNER_LC="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          IMAGE="ghcr.io/${OWNER_LC}/mobile-test"
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           echo "tags=${IMAGE}:latest,${IMAGE}:${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
 
@@ -79,12 +79,12 @@ jobs:
             m2-${{ runner.os }}-
 
       - run: |
-          nohup appium --base-path /wd/hub > appium.log 2>&1 &
-          for i in {1..30}; do
-            curl -sf http://localhost:4723/wd/hub/status && break
-            sleep 1
-          done
-          curl -sf http://localhost:4723/wd/hub/status || (echo "Appium não respondeu a tempo" && exit 1)
+        nohup appium --base-path /wd/hub > appium.log 2>&1 &
+        for i in {1..30}; do
+        curl -sf http://localhost:4723/wd/hub/status && break
+        sleep 1
+        done
+        curl -sf http://localhost:4723/wd/hub/status || (echo "Appium não respondeu a tempo" && exit 1)
 
       - run: |
           mvn -B clean test
