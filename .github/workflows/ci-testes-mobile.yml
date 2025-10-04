@@ -79,12 +79,12 @@ jobs:
             m2-${{ runner.os }}-
 
       - run: |
-        nohup appium --base-path /wd/hub > appium.log 2>&1 &
-        for i in {1..30}; do
-        curl -sf http://localhost:4723/wd/hub/status && break
-        sleep 1
-        done
-        curl -sf http://localhost:4723/wd/hub/status || (echo "Appium não respondeu a tempo" && exit 1)
+          nohup appium --base-path /wd/hub > appium.log 2>&1 &
+          for i in {1..30}; do
+            curl -sf http://localhost:4723/wd/hub/status && break
+            sleep 1
+          done
+          curl -sf http://localhost:4723/wd/hub/status || (echo "Appium não respondeu a tempo" && exit 1)
 
       - run: |
           mvn -B clean test
