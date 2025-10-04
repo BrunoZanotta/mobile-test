@@ -16,13 +16,10 @@ env:
 
 jobs:
   build-and-push-image:
-    name: Build & Push da Imagem (GHCR)
     runs-on: ubuntu-latest
-
     outputs:
       image: ${{ steps.meta.outputs.image }}
       tags: ${{ steps.meta.outputs.tags }}
-
     steps:
       - uses: actions/checkout@v4
 
@@ -40,7 +37,9 @@ jobs:
           driver: docker-container
 
       - id: meta
+        shell: bash
         run: |
+          set -euo pipefail
           OWNER_LC="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
           IMAGE="ghcr.io/${OWNER_LC}/mobile-test"
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
@@ -59,15 +58,30 @@ jobs:
             BUILDKIT_INLINE_CACHE=1
 
   run-tests:
-    name: Executar Testes (na imagem publicada)
     runs-on: ubuntu-latest
     needs: build-and-push-image
-
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "Pixel 6 - Android 12"
+            device: "Google Pixel 6"
+            os: "12.0"
+          - name: "Galaxy S22 - Android 13"
+            device: "Samsung Galaxy S22"
+            os: "13.0"
+    name: Executar Testes (${{ matrix.name }})
     container:
       image: ${{ needs.build-and-push-image.outputs.image }}:latest
       env:
         MAVEN_OPTS: "-Dmaven.artifact.threads=8 -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=warn -Djava.net.preferIPv4Stack=true"
-
+        APPIUM_SERVER_URL: "https://hub.browserstack.com/wd/hub"
+        BS_USERNAME: ${{ secrets.BS_USERNAME }}
+        BS_ACCESS_KEY: ${{ secrets.BS_ACCESS_KEY }}
+        BS_PROJECT: ${{ secrets.BS_PROJECT }}
+        BS_BUILD: ${{ secrets.BS_BUILD }}
+        BS_DEVICE: ${{ matrix.device }}
+        BS_OS_VERSION: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -78,27 +92,55 @@ jobs:
           restore-keys: |
             m2-${{ runner.os }}-
 
-      - run: |
-          nohup appium --base-path /wd/hub > appium.log 2>&1 &
-          for i in {1..30}; do
-            curl -sf http://localhost:4723/wd/hub/status && break
-            sleep 1
-          done
-          curl -sf http://localhost:4723/wd/hub/status || (echo "Appium não respondeu a tempo" && exit 1)
+      - name: Upload APK to BrowserStack
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="apps/Android-MyDemoAppRN.1.3.0.build-244.apk"
+          if [ ! -f "$APP_PATH" ]; then
+            echo "APK não encontrado em $APP_PATH"; exit 1
+          fi
+          HTTP_CODE=$(curl -s -w "%{http_code}" -o bs_upload.json \
+            -u "$BS_USERNAME:$BS_ACCESS_KEY" \
+            -X POST "https://api-cloud.browserstack.com/app-automate/upload" \
+            -F "file=@${APP_PATH}")
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "Upload falhou. HTTP $HTTP_CODE"; cat bs_upload.json; exit 1
+          fi
+          APP_URL=$(python3 -c 'import json; print(json.load(open("bs_upload.json")).get("app_url",""))')
+          if [ -z "$APP_URL" ]; then
+            echo "Resposta sem app_url:"; cat bs_upload.json; exit 1
+          fi
+          echo "APP_URL=$APP_URL" | tee -a "$GITHUB_ENV"
 
-      - run: |
-          mvn -B clean test
+      - name: Run tests on BrowserStack
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${APP_URL:-}" ]; then
+            echo "APP_URL não definido após upload do APK"; exit 1
+          fi
+          mvn -B \
+            -Dappium.server.url="$APPIUM_SERVER_URL" \
+            -Dbrowserstack.username="$BS_USERNAME" \
+            -Dbrowserstack.accesskey="$BS_ACCESS_KEY" \
+            -Dapp.url="$APP_URL" \
+            -Dbs.project="${BS_PROJECT:-mobile-test}" \
+            -Dbs.build="${BS_BUILD:-build-$GITHUB_RUN_NUMBER}" \
+            clean test
 
-      - if: always()
+      - name: Upload Allure Results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: allure-results
+          name: allure-results-${{ matrix.name }}
           path: target/allure-results
           retention-days: 7
 
-      - if: always()
+      - name: Upload Surefire Reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: appium-log
-          path: appium.log
+          name: surefire-reports-${{ matrix.name }}
+          path: target/surefire-reports
           retention-days: 7
